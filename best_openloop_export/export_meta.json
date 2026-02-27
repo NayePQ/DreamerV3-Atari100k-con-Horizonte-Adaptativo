@@ -1,0 +1,8 @@
+{
+  "best_seed_dir": "/home/npoma/TARL/artifacts/atari100k_alien_adapt/seed1_20260226T032452",
+  "source_mp4": "/home/npoma/TARL/artifacts/atari100k_alien_adapt/seed1_20260226T032452/scope/report-openloop-image.mp4/00000000000000396440-69a03291ed2897e8.mp4",
+  "copied_mp4": "/home/npoma/TARL/artifacts/atari100k_alien_adapt/best_openloop_export/alien_adapt_best_openloop.mp4",
+  "panel_png": "/home/npoma/TARL/artifacts/atari100k_alien_adapt/best_openloop_export/alien_adapt_best_openloop_panel.png",
+  "num_frames": 42,
+  "fps": 10.0
+}

@@ -1,14 +1,18 @@
-# Mastering Diverse Domains through World Models
+# DreamerV3 + Horizonte de Imaginacion Adaptativo (Fork)
 
-A reimplementation of [DreamerV3][paper], a scalable and general reinforcement
-learning algorithm that masters a wide range of applications with fixed
-hyperparameters.
+Este repositorio es un **fork de DreamerV3** con una extension para control
+adaptativo del horizonte de imaginacion durante entrenamiento en Atari100k
+(caso principal: `atari100k_alien`).
 
-![DreamerV3 Tasks](https://user-images.githubusercontent.com/2111293/217647148-cbc522e2-61ad-4553-8e14-1ecdc8d9438b.gif)
+## Base del repositorio
 
-If you find this code useful, please reference in your paper:
+- Repositorio base: https://github.com/danijar/dreamerv3
+- Autor original: Danijar Hafner
+- Licencia original: MIT ([LICENSE](LICENSE))
 
-```
+Si usas este codigo, cita el trabajo original:
+
+```bibtex
 @article{hafner2025dreamerv3,
   title={Mastering diverse control tasks through world models},
   author={Hafner, Danijar and Pasukonis, Jurgis and Ba, Jimmy and Lillicrap, Timothy},
@@ -19,105 +23,132 @@ If you find this code useful, please reference in your paper:
 }
 ```
 
-To learn more:
+## Innovacion implementada
 
-- [Research paper][paper]
-- [Project website][website]
-- [Twitter summary][tweet]
+DreamerV3 usa un horizonte fijo de imaginacion (`imag_length=15`). En este fork
+se agrega un mecanismo opcional (`agent.imag_adapt.enabled`) que **atenua**
+la contribucion de pasos imaginados cuando la perdida dinamica (`train/loss/dyn`)
+indica mayor incertidumbre.
 
-## DreamerV3
+La idea es reducir gradientes ruidosos del actor en fases donde el modelo de
+mundo esta menos confiable, sin cortar por completo la imaginacion.
 
-DreamerV3 learns a world model from experiences and uses it to train an actor
-critic policy from imagined trajectories. The world model encodes sensory
-inputs into categorical representations and predicts future representations and
-rewards given actions.
+### Regla adaptativa (resumen)
 
-![DreamerV3 Method Diagram](https://user-images.githubusercontent.com/2111293/217355673-4abc0ce5-1a4b-4366-a08d-64754289d659.png)
+Sea `L_dyn` la perdida dinamica media del lote:
 
-DreamerV3 masters a wide range of domains with a fixed set of hyperparameters,
-outperforming specialized methods. Removing the need for tuning reduces the
-amount of expert knowledge and computational resources needed to apply
-reinforcement learning.
+- EMA de dinamica:
+  `ema_t = (1 - alpha) * ema_{t-1} + alpha * L_dyn`
+- Ratio relativo:
+  `r_t = L_dyn / max(eps, ema_t)`
+- Activacion (estado "malo"):
+  se activa cuando `step >= warmup` y `L_dyn > abs_thresh` y `r_t > rel_thresh`.
+- Severidad:
+  `sev = clip((r_t - rel_thresh) / (rel_max - rel_thresh), 0, 1)`
+- Decaimiento:
+  `gamma = 1 - sev * (1 - min_decay)`
+- Mascara temporal:
+  `m_k = 1` para `k < min_horizon`,
+  luego `m_k = max(tail_floor, gamma^k)`.
 
-![DreamerV3 Benchmark Scores](https://github.com/danijar/dreamerv3/assets/2111293/0fe8f1cf-6970-41ea-9efc-e2e2477e7861)
+Cuando no hay activacion, `m_k = 1` para todo `k`.
 
-Due to its robustness, DreamerV3 shows favorable scaling properties. Notably,
-using larger models consistently increases not only its final performance but
-also its data-efficiency. Increasing the number of gradient steps further
-increases data efficiency.
+### Donde esta en el codigo
 
-![DreamerV3 Scaling Behavior](https://user-images.githubusercontent.com/2111293/217356063-0cf06b17-89f0-4d5f-85a9-b583438c98dd.png)
+- Configuracion de la mejora: [dreamerv3/configs.yaml](dreamerv3/configs.yaml)
+  - bloque `agent.imag_adapt`
+- Implementacion de la mascara: [dreamerv3/agent.py](dreamerv3/agent.py)
+  - metodo `_imag_mask(...)`
+- Integracion en perdida de imaginacion: [dreamerv3/agent.py](dreamerv3/agent.py)
+  - llamada `imag_loss(..., imag_mask=imag_mask, ...)`
 
-# Instructions
+## Instalacion
 
-The code has been tested on Linux and Mac and requires Python 3.11+.
+Requisitos:
 
-## Docker
+- Python 3.11+
+- JAX con CUDA (si se usa GPU)
 
-You can either use the provided `Dockerfile` that contains instructions or
-follow the manual instructions below.
+Instalacion rapida:
 
-## Manual
-
-Install [JAX][jax] and then the other dependencies:
-
-```sh
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -U pip
 pip install -U -r requirements.txt
 ```
 
-Training script:
+Para JAX GPU, seguir guia oficial:
+https://github.com/google/jax#pip-installation-gpu-cuda
 
-```sh
+## Ejecucion (Atari100k Alien, 200M)
+
+### Baseline (sin mejora)
+
+```bash
 python dreamerv3/main.py \
-  --logdir ~/logdir/dreamer/{timestamp} \
-  --configs crafter \
-  --run.train_ratio 32
+  --logdir /ruta/a/artifacts/atari100k_alien_baseline/seed0_{timestamp} \
+  --configs atari100k size200m \
+  --task atari100k_alien \
+  --script train \
+  --jax.platform cuda \
+  --jax.train_devices [0] \
+  --jax.policy_devices [0] \
+  --run.steps 110000 \
+  --run.envs 1 \
+  --run.train_ratio 256 \
+  --agent.imag_adapt.enabled False
 ```
 
-To reproduce results, train on the desired task using the corresponding config,
-such as `--configs atari --task atari_pong`.
+### Adapt (con mejora)
 
-View results:
-
-```sh
-pip install -U scope
-python -m scope.viewer --basedir ~/logdir --port 8000
+```bash
+python dreamerv3/main.py \
+  --logdir /ruta/a/artifacts/atari100k_alien_adapt/seed0_{timestamp} \
+  --configs atari100k size200m \
+  --task atari100k_alien \
+  --script train \
+  --jax.platform cuda \
+  --jax.train_devices [0] \
+  --jax.policy_devices [0] \
+  --run.steps 110000 \
+  --run.envs 1 \
+  --run.train_ratio 256 \
+  --agent.imag_adapt.enabled True \
+  --agent.imag_adapt.abs_thresh 1.0 \
+  --agent.imag_adapt.rel_thresh 1.15
 ```
 
-Scalar metrics are also writting as JSONL files.
+Nota importante Atari100k:
 
-# Tips
+- `run.steps = 110000` son pasos del agente.
+- Con `repeat=4` en `env.atari100k`, eso corresponde aprox. a `400K`
+  environment steps.
 
-- All config options are listed in `dreamerv3/configs.yaml` and you can
-  override them as flags from the command line.
-- The `debug` config block reduces the network size, batch size, duration
-  between logs, and so on for fast debugging (but does not learn a good model).
-- By default, the code tries to run on GPU. You can switch to CPU or TPU using
-  the `--jax.platform cpu` flag.
-- You can use multiple config blocks that will override defaults in the
-  order they are specified, for example `--configs crafter size50m`.
-- By default, metrics are printed to the terminal, appended to a JSON lines
-  file, and written as Scope summaries. Other outputs like WandB and
-  TensorBoard can be enabled in the training script.
-- If you get a `Too many leaves for PyTreeDef` error, it means you're
-  reloading a checkpoint that is not compatible with the current config. This
-  often happens when reusing an old logdir by accident.
-- If you are getting CUDA errors, scroll up because the cause is often just an
-  error that happened earlier, such as out of memory or incompatible JAX and
-  CUDA versions. Try `--batch_size 1` to rule out an out of memory error.
-- Many environments are included, some of which require installing additional
-  packages. See the `Dockerfile` for reference.
-- To continue stopped training runs, simply run the same command line again and
-  make sure that the `--logdir` points to the same directory.
+## Salidas y metricas
 
-# Disclaimer
+Cada corrida guarda:
 
-This repository contains a reimplementation of DreamerV3 based on the open
-source DreamerV2 code base. It is unrelated to Google or DeepMind. The
-implementation has been tested to reproduce the official results on a range of
-environments.
+- `metrics.jsonl`: metricas de entrenamiento
+- `scores.jsonl`: retornos por episodio
+- `scope/`: videos y trazas (incluye `report-openloop-image.mp4`)
+- `ckpt/`: checkpoints
 
-[jax]: https://github.com/google/jax#pip-installation-gpu-cuda
-[paper]: https://arxiv.org/pdf/2301.04104
-[website]: https://danijar.com/dreamerv3
-[tweet]: https://twitter.com/danijarh/status/1613161946223677441
+## Scripts auxiliares en este workspace
+
+- Export de open-loop de mejor seed adapt:
+  `artifacts/atari100k_alien_adapt/export_best_adapt_openloop.py`
+- Export comparativo adapt vs baseline (incluye paneles y videos):
+  `artifacts/atari100k_alien_adapt/export_openloop_5plus45_adapt_vs_baseline.py`
+
+## Transparencia sobre datos de prueba
+
+En `artifacts/atari100k_alien_adapt_prueba5/` hay material de **prototipado de
+reporte**. Revisar `README_PRUEBA.md` antes de usar esos resultados como
+benchmark final.
+
+## Creditos
+
+- DreamerV3 original: Danijar Hafner y colaboradores.
+- Este fork agrega un mecanismo de horizonte de imaginacion adaptativo para
+  analisis experimental en Atari100k.
